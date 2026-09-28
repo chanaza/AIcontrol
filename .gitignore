@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.sqlite3
+.openai_sync_cursor*
+.connector_sync_cursor*
