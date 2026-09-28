@@ -1,190 +1,166 @@
 # AI Usage Control Plane — ניתוח פערים ותכנית ביצוע
 
-תאריך: 2026-09-28 · מבוסס על קומיט `1aac81c` ("Initial AI control plane MVP")
+גרסה 2 · 2026-09-28 · מבוסס על האפיון `docs/GPTProductPlan.txt` ועל הקוד בקומיט `1aac81c`
+
+> **מקור האמת לדרישות הוא `docs/GPTProductPlan.txt`.** המסמך הזה מפרט רק איך מגיעים ממה שקיים בריפו למה שמוגדר שם. הפניות בצורה §N מכוונות לסעיפים באפיון.
 
 ## 1. השורה התחתונה
 
-הריפו הנוכחי הוא **שלד הדגמה ולא מערכת**. יש בו דשבורד יפה ו-API שמקבל אירועים ידניים, אבל **שום נתון אמיתי לא זורם מאף ספק למערכת**:
+הריפו הנוכחי הוא **שלד הדגמה ולא מערכת**. הוא לא עומד בהגדרת ה-MVP של האפיון (§22):
 
+> "I can connect an enterprise AI account, ingest its authorized data, normalize it, and combine it with another AI provider into one useful organizational view."
+
+כרגע אי אפשר לחבר אף חשבון אמיתי:
 - כפתור "חיבור ספק" רק משנה סטטוס ל-`connected` בלי שום אימות (`app/main.py:77-84`).
-- מחבר OpenAI קיים, אבל **שום דבר לא מפעיל אותו** והפלט שלו לא הופך ל-`ActivityEvent`.
-- מחבר Anthropic ומחבר Microsoft **לא קיימים בכלל**, אף שה-ROADMAP מגדיר אותם כ-MVP.
-- כל מה שמופיע בדשבורד מגיע משלושה אירועי דמו קשיחים (`app/main.py:102-111`).
+- מחבר OpenAI קיים, אבל שום דבר לא מפעיל אותו והפלט שלו לא נכנס למערכת. הוא גם מכסה את OpenAI **API Platform** ולא את **ChatGPT Enterprise**, שהוא המוצר שהאפיון מדבר עליו.
+- מחבר Anthropic, שהוא **עדיפות 1 באפיון** (§7), ומחבר Microsoft לא קיימים בכלל.
+- כל מה שמופיע בדשבורד מגיע משלושה אירועי דמו קשיחים.
+- **§24 דורש מחקר API רשמי לפני כתיבת קוד. השלב הזה דולג.** `research/vendor_capability_matrix.md` שטחי, ולא ממפה endpoints, הרשאות, רמת פירוט של sessions ותוכן, או rate limits.
 
-מתוך 9 סעיפי ה-MVP שב-`research/ROADMAP.md`, בפועל מומש חלקית רק סעיף אחד (דשבורד בסיסי). בנוסף, "Claude-ready spec prompt" מסומן שם כ-completed ו"נשמר בריפו", אבל **הקובץ לא נמצא בריפו**.
+## 2. עמידה בהגדרת ה-MVP (§22)
 
-## 2. מיפוי: מה הוגדר ומה קיים
+| # | דרישה | מצב בריפו | פער |
+|---|---|---|---|
+| 1 | Multi-tenant backend | `tenant_id` חופשי ב-URL | אין אימות משתמשים ואין בידוד בין tenants |
+| 2 | Connector framework | `BaseConnector` ריק | אין registry, scheduler, מיפוי או cursors ב-DB |
+| 3 | שני מחברים אמיתיים | אין (OpenAI API לא מחובר) | Claude Enterprise ו-ChatGPT Enterprise |
+| 4 | ניהול credentials (OAuth/API) | אין | אשף חיבור ב-UI, הצפנה, OAuth ל-Microsoft |
+| 5 | Incremental sync | cursor שבור לכיוון הלא נכון | pagination, retry, 429, lookback |
+| 6 | Common AI Activity Model (§5) | טבלה שטוחה אחת | Organization, Provider, Product, User, Session, Event |
+| 7 | Users | מחרוזת email בלבד | department, team, role, cost_center, identity_source |
+| 8 | Products | שדה טקסט | ישות מלאה |
+| 9 | Sessions | אין | ישות מלאה, רק כשהספק חושף אותן |
+| 10 | Usage | מעורבב עם אירועים | טבלת usage נפרדת עם upsert |
+| 11 | Cost | שדה יחיד | הפרדה בין Actual ל-Estimated (§10), ועלות רישיונות |
+| 12 | Dashboard (§8) | 3 כרטיסים | כמה, איפה, מי, מה השתנה |
+| 13 | Cross-vendor analytics (§9) | סיכום לפי ספק | טביעת רגל לפי משתמש ומחלקה |
+| 14 | Basic anomaly detection (§11) | אין | spikes בשימוש, בעלות וב-tokens, heavy users |
+| 15 | Basic recommendations (§14) | אין | Finding, Evidence, Impact, Action, Confidence |
+| 16 | Capability matrix (§5, §20) | dict קשיח וסותר | מטריצה אמיתית לכל מחבר + Data coverage |
 
-| סעיף MVP (ROADMAP) | מצב בפועל | פער |
-|---|---|---|
-| Multi-tenant backend | `tenant_id` הוא פרמטר חופשי ב-URL, ברירת מחדל `demo` | אין אימות משתמשים ואין בידוד. כל אחד יכול לקרוא ולכתוב נתונים של כל tenant |
-| Connector framework | `BaseConnector` עם מתודות `NotImplementedError` | אין registry, אין orchestration, אין מיפוי לאירועים, cursor נשמר בקובץ מקומי |
-| 2–3 מחברים אמיתיים | OpenAI בלבד, לא מחובר לשום דבר | אין Anthropic ואין Microsoft |
-| ניהול הרשאות OAuth/API | אין | מפתחות נקראים ממשתני סביבה, אין אחסון מוצפן, אין OAuth ל-Microsoft |
-| סנכרון אינקרמנטלי | cursor של audit בלבד | באג כיווני (ראו §3), אין pagination ל-usage/cost, אין retry/429, אין scheduler |
-| Common AI Activity Model | טבלה שטוחה אחת `activity_events` | אין ישויות Users/Products/Sessions, אין זיהוי זהות חוצה-ספקים, אין הפרדה בין אירוע למדד מצטבר |
-| דשבורד | 3 כרטיסים + תגיות | אין טווחי זמן, מגמות, פירוט משתמש, ייצוא |
-| אנליטיקה חוצת-ספקים | סיכום לפי ספק ותגית | אין טביעת רגל למשתמש ואין השוואת מחלקות |
-| זיהוי חריגות והמלצות | **אין** | — |
-| מטריצת יכולות | dict קשיח ב-`main.py` + מסמך מחקר שטחי | לא מבוססת endpoints, ונתונים סותרים בין הקוד למסמך |
-| עיקרון UX: "כיסוי וביטחון לכל ממצא" | **אין** | — |
+## 3. באגים ובעיות בקוד הקיים
 
-## 3. בעיות ספציפיות בקוד הקיים
+1. **כפילויות נתונים.** אין idempotency. כל seed וכל סנכרון מכפילים את הנתונים (`app/store.py:51-68`).
+2. **cursor של audit ב-OpenAI מדפדף אחורה**, כך שאירועים חדשים לא נאספים אחרי הסנכרון הראשון (`connectors/openai_connector/connector.py:88-105`).
+3. **usage ו-cost נחתכים אחרי העמוד הראשון.** `has_more` ו-`next_page` לא נקראים.
+4. **usage מצטבר ואירועים בודדים באותה טבלה.** לכן המספרים "אירועים" ו"משתמשים פעילים" חסרי משמעות.
+5. **מטריצת יכולות סותרת** בין `main.py`, המחבר ומסמך המחקר.
+6. **אין אימות משתמשים** על אף endpoint.
+7. **הבדיקות לא רצות.** `python -m unittest` מוצא 0 בדיקות, כי חסר `tests/__init__.py`.
+8. אין CI, אין migrations ואין Docker. החיבורים ל-SQLite לא נסגרים. ההוראות מיועדות ל-Windows בלבד.
 
-**נכונות**
-1. **כפילויות נתונים.** אין מפתח ייחודי או idempotency. כל לחיצה על "טעינת נתוני הדגמה" וכל סנכרון חוזר מכפילים עלויות ואירועים (`app/store.py:51-68`).
-2. **cursor של audit הולך לכיוון הלא נכון.** `after=<id אחרון בעמוד>` מדפדף אחורה בהיסטוריה (הרשימה ממוינת מהחדש לישן), כך שאירועים חדשים לא ייאספו לעולם אחרי הסנכרון הראשון (`connectors/openai_connector/connector.py:88-105`). צריך לאמת מול התיעוד ולעבור לחלון זמן (`effective_at[gt]`).
-3. **usage ו-cost מחזירים עמוד אחד בלבד.** `has_more` ו-`next_page` נזרקים, כך שחלון של יותר מ-31 ימים נחתך בשקט.
-4. **ערבוב סוגי נתונים.** דלי שימוש יומי מצטבר (usage bucket) ואירוע בודד (audit) נכנסים לאותה טבלה. `COUNT(*)` כ"אירועים" ו-`COUNT(DISTINCT user_email)` כ"משתמשים פעילים" חסרי משמעות כשמערבבים ביניהם.
-5. **מטריצות סותרות.** בקוד Anthropic מסומן `audit: False`, והמפתח `content` שונה מ-`conversation_content` שבמחבר.
+## 4. עקרונות מחייבים מהאפיון
 
-**אבטחה**
-6. אין אימות משתמשים על אף endpoint, כולל `POST /api/demo/seed`.
-7. אין מקום לאחסן סודות. ה-README מבטיח "מנהל סודות", אבל אין אפילו הצפנה.
+- **DO NOT build an AI Gateway** (§2, §21). אין proxy, אין SDK wrapper ואין client מיוחד. כל הנתונים מגיעים רק מ-APIs רשמיים של הספק, בהרשאה שהארגון נותן.
+  → **מה שהספק לא חושף, המערכת לא יודעת, ומציגה את זה במפורש** (§13, §20).
+- **אין להמציא APIs** (§7, §24). כל מחבר נבנה רק אחרי תיעוד מדויק של ה-endpoints מתוך התיעוד הרשמי.
+- **Actual ≠ Estimated** (§10). הערכת עלות לעולם לא מוצגת כנתון רשמי.
+- **Data available ≠ Data analyzed** (§13).
+- **Analyze + Recommend בלבד** (§14). פעולות אכיפה (§15) לא נבנות ב-MVP, אבל הממשק של המחבר משאיר להן מקום.
+- **Product B, Discovery (§4), לא נבנה**, וגם לא DLP מתקדם או אכיפה בזמן אמת (§22).
 
-**איכות ותשתית**
-8. **הבדיקות לא רצות.** `python -m unittest` מוצא 0 בדיקות, כי חסר `tests/__init__.py`. בפועל יש 4 בדיקות בלבד, אף אחת מהן לא בודקת את ה-API או את ה-store.
-9. אין CI, אין lint ואין type-check.
-10. SQLite בלי migrations. החיבורים לא נסגרים (`with conn` מבצע commit ולא סוגר). `tag_summary` טוען את כל הטבלה לזיכרון.
-11. נרמול תגיות מבוסס טבלה קשיחה של 6 כינויים, ואי אפשר לערוך אותה לפי tenant.
-12. הוראות הרצה ל-Windows בלבד. אין Docker ואין קובץ `.env.example`.
+## 5. החלטות מוצר נוספות (התקבלו 2026-09-28)
 
-## 4. ארכיטקטורת יעד
+1. **SaaS וגם התקנה אצל הלקוח.** אותו קוד רץ בשני המצבים: image אחד של Docker, Compose ו-Helm, וכל ההגדרות במשתני סביבה. ב-on-prem מפתח ההצפנה נשאר אצל הלקוח.
+2. **החיבור לספקים נעשה מתוך ה-UI על ידי מנהל הארגון.** אין "חיבור מראש":
+   - Claude Enterprise ו-ChatGPT Enterprise: הדבקת המפתחות הרלוונטיים (Admin, Analytics או Compliance, לפי המחקר), בדיקה חיה, הצגת היכולות שהמפתח באמת פותח, ושמירה מוצפנת.
+   - Microsoft: "התחבר עם Microsoft" ו-admin consent ב-Entra. ב-SaaS האפליקציה רשומה פעם אחת כ-multi-tenant. ב-on-prem הלקוח רושם אפליקציה משלו לפי מדריך מובנה במסך.
+   - מיד אחרי חיבור מתחיל backfill, ורואים התקדמות, שגיאות וזמן סנכרון אחרון.
+3. **ניתוח תוכן שיחות ו-PII הוא יעד חשוב**, בגבולות האפיון: רק דרך APIs רשמיים (Compliance, Graph). האיסוף כבוי כברירת מחדל, והלקוח מפעיל אותו לכל חיבור בנפרד (§17). ל-DLP מתקדם יש שלב נפרד אחרי ה-MVP.
+4. **Stack:** Python/FastAPI, Postgres, SQLAlchemy ו-Alembic, worker לסנכרון. ממשק ב-React ו-Vite (RTL, עברית).
 
-```
- ┌──────────── Connectors (per vendor) ────────────┐
- │ fetch raw pages → store raw → map → canonical   │
- └──────────────┬──────────────────────────────────┘
-                │  SyncRun (status, counts, errors, cursors)
- ┌──────────────▼───────────┐     ┌──────────────────────┐
- │ Worker / Scheduler       │────▶│ Postgres             │
- │ (APScheduler / RQ)       │     │  raw_records (JSONB) │
- └──────────────────────────┘     │  canonical tables    │
-                                  │  findings            │
- ┌──────────────────────────┐     └─────────▲────────────┘
- │ FastAPI (auth, tenants,  │───────────────┘
- │ connectors, analytics)   │◀──── Dashboard (RTL, Hebrew)
- └──────────────────────────┘
-```
+## 6. מודל נתונים (לפי §5, §16, §18)
 
-**מודל נתונים קנוני (Common AI Activity Model)**
-- `tenants`, `app_users` (משתמשי המערכת עצמה), `connections` (כולל סוד מוצפן, scopes, סטטוס בריאות)
-- `people`: זהות מאוחדת לפי email או UPN, עם `person_identities` לכל ספק
-- `products`: ChatGPT Enterprise, OpenAI API, Claude API, Claude Code, M365 Copilot וכו'
-- `usage_daily`: מדד מצטבר לפי (tenant, vendor, product, person?, model?, project?, date), עם מפתח ייחודי ו-upsert
-- `cost_daily`: עלות לפי ספק, מוצר, פרויקט ויום, עם שדה מקור (`reported` / `estimated` / `license`)
-- `audit_events`: אירועים בודדים עם `vendor_event_id` ייחודי
-- `sessions`: רק כשהספק חושף אותן (מסומן במטריצה)
-- `raw_records`: המטען המקורי מהספק, לשחזור ולמיפוי מחדש
-- `sync_runs` ו-`sync_cursors` לכל stream
-- `findings`: חריגות והמלצות, עם `coverage` ו-`confidence`
-- `tag_rules`: כללי נרמול לכל tenant
+שכבות נפרדות, כפי שנדרש ב-§16:
 
-## 5. תכנית ביצוע בשלבים
+| שכבה | טבלאות |
+|---|---|
+| Tenancy | `organizations`, `app_users` (RBAC), `app_audit_log` |
+| Connections | `connections` (סוד מוצפן, סטטוס, capabilities שהתגלו), `sync_runs`, `sync_cursors` |
+| Raw | `raw_records` (JSONB, מקור ו-stream, retention של 30/90/180 יום) |
+| Normalized | `providers`, `products`, `people` + `person_identities`, `sessions`, `activity_events`, `usage_daily`, `cost_daily` (`cost_type: actual \| estimated \| license`), `licenses` |
+| Derived | `findings` (Finding, Evidence, Impact, Action, Confidence), `coverage_snapshots` |
+| Sensitive | `content_items` (מוצפן, גישה מוגבלת, retention נפרד), `content_detections` |
+| Policy | `policies` (§13), `retention_policies` (§17), `tag_rules` |
 
-כל שלב מסתיים ב-PR עם בדיקות, CI ירוק וקריטריוני קבלה מוגדרים.
+**Data coverage (§20)** נמדד בפועל ולא רק מוצהר. לכל חיבור ויכולת נשמר: האם הספק תומך, האם ההרשאה קיימת, והאם הנתונים זורמים (מתוך `sync_runs`). מכאן מחושב האחוז שמוצג בפסים.
 
-### שלב 0 — יסודות הנדסיים (1–2 ימים)
-- `pyproject.toml`, ruff, mypy, pytest, `tests/__init__.py`, GitHub Actions
-- Docker Compose (api + worker + postgres), `.env.example`, הוראות הרצה לכל מערכת הפעלה
-- SQLAlchemy 2 ו-Alembic, מעבר ל-Postgres (SQLite נשאר לבדיקות בלבד)
-- **קבלה:** `docker compose up` מעלה את המערכת, ו-`pytest` רץ ב-CI ומוצא את כל הבדיקות.
+## 7. תכנית ביצוע
 
-### שלב 1 — מודל נתונים ו-ingestion אידמפוטנטי (2–3 ימים)
-- הטבלאות מ-§4, מפתחות ייחודיים ו-upsert
-- שכבת mapping: `raw → canonical` לכל ספק, עם בדיקות יחידה מבוססות fixtures של תגובות אמיתיות
-- API ה-ingest הקיים עובר לכתוב דרך אותה שכבה
-- **קבלה:** הרצת אותו סנכרון פעמיים לא משנה אף מספר בדשבורד.
+### שלב 1 — מחקר API רשמי (§24), **לפני כל קוד מחברים** (2–3 ימים)
+לכל אחד מהמוצרים Claude Enterprise, ChatGPT Enterprise ו-Microsoft 365 Copilot:
+- endpoints (method ו-path), ואיזה סוג מפתח או הרשאה כל אחד דורש, ובאיזו תוכנית (Enterprise, Team, API)
+- users, usage, cost ועלות רישיונות, sessions, audit, conversation content
+- רמת פירוט: לפי משתמש, יום, מודל או session
+- pagination, rate limits, webhooks
+- מיפוי של כל שדה לשדה ב-Common Model, ורשימת פערים מפורשת
 
-### שלב 2 — אימות משתמשים, tenants וסודות (2–3 ימים)
-- התחברות (OIDC/SSO, או בשלב ראשון email ו-magic link), תפקידים admin/viewer
-- `tenant_id` נגזר מהמשתמש המחובר ולא מה-URL
-- הצפנת סודות (Fernet עם מפתח מ-KMS או Vault), ו-API להזנת מפתח שמאמת אותו לפני שמירה
-- **קבלה:** משתמש של tenant A מקבל 404 על נתוני tenant B, ומפתח לא תקין נדחה בשלב החיבור.
+**תוצר:** `research/capabilities/<vendor>.md` וקובץ `capabilities.yaml` אחד, שממנו נגזרות המטריצה בקוד ומסך ה-coverage. כל שורה עם קישור לתיעוד הרשמי.
+**בסיום:** המלצה על שני המחברים הראשונים (לפי האפיון: Claude ואחריו ChatGPT) ועל התאמות למודל הנתונים.
 
-### שלב 3 — מסגרת מחברים וסנכרון (2–3 ימים)
-- ממשק מחבר חדש: `validate_credentials()`, `capabilities()`, `streams()`, ו-`fetch(stream, cursor) -> Iterator[RawPage]`
-- HTTP client משותף: retries עם backoff, כיבוד `Retry-After` ו-429, pagination גנרית, timeouts, לוגים מובנים
-- cursors נשמרים ב-DB לכל stream, עם חלון חפיפה (lookback) לתיקונים מאוחרים של הספק
-- worker עם scheduler, `sync_runs` שמוצגים ב-UI (הצלחה, כשל, כמות רשומות, שגיאה אחרונה)
-- **קבלה:** סנכרון שנכשל באמצע ממשיך מאותה נקודה, והשגיאה מוצגת למנהל.
+### שלב 2 — יסודות הנדסיים (1–2 ימים, במקביל לשלב 1)
+- `pyproject.toml`, ruff, mypy, pytest, GitHub Actions
+- Docker Compose (api, worker, postgres), `.env.example`
+- SQLAlchemy 2 ו-Alembic
 
-### שלב 4 — מחבר OpenAI אמיתי (2 ימים)
-- תיקון הבאגים מ-§3 (כיוון ה-cursor ו-pagination)
-- streams: users, projects, `usage/completions` (ו-embeddings, images וכו' לפי הצורך), costs, audit_logs
-- מיפוי ל-`usage_daily`, `cost_daily`, `audit_events` ו-`people`
-- **קבלה:** מול ארגון אמיתי (או הקלטות VCR של תגובות אמיתיות), העלות בדשבורד תואמת ל-Usage בקונסולת OpenAI לאותה תקופה.
+### שלב 3 — מודל נתונים ו-ingestion אידמפוטנטי (2–3 ימים)
+- הטבלאות מ-§6, upsert ושכבת `raw → normalized` עם בדיקות על fixtures
+- **קבלה:** אותו סנכרון פעמיים לא משנה אף מספר.
 
-### שלב 5 — מחבר Anthropic (2 ימים)
-- Admin API (מפתח `sk-ant-admin...`): משתמשים, workspaces, API keys, usage report של messages, cost report, ו-Claude Code usage report
-- **קבלה:** זהה לשלב 4, מול קונסולת Claude.
+### שלב 4 — Tenancy, אימות משתמשים ו-credentials (2–3 ימים)
+- התחברות למערכת, RBAC בסיסי (admin, analyst, content_reviewer), tenant נגזר מהמשתמש המחובר
+- הצפנת סודות (envelope encryption), מפתח ב-KMS או בקובץ לקוח ב-on-prem
+- **קבלה:** tenant A לא רואה נתונים של tenant B, ומפתח לא תקין נדחה בשלב החיבור.
 
-### שלב 6 — מחבר Microsoft 365 Copilot (3–4 ימים)
-- רישום אפליקציה ב-Entra ID, OAuth עם client credentials ו-admin consent
-- Graph reports: שימוש ב-Copilot לפי משתמש, סיכום רישיונות ומשתמשים פעילים
-- אופציונלי ובהסכמה מפורשת: Purview audit ו-Copilot interaction history (תוכן, ולכן מסומן כרגיש)
-- עלות: מבוססת רישיונות (מספר מושבים × מחיר), מסומנת `estimated`
-- **קבלה:** מספר המשתמשים הפעילים תואם לדוח ה-Copilot ב-M365 Admin Center.
+### שלב 5 — מסגרת מחברים וסנכרון (2–3 ימים)
+- ממשק לפי §6: `authenticate`, `test_connection`, `get_capabilities`, `sync_*`, `get_sync_cursor`, בנוסף ל-`actions()` ריק לעתיד (§15)
+- HTTP client משותף עם retry, backoff, `Retry-After`, pagination ו-timeouts
+- scheduler, `sync_runs` ותמיכה ב-webhooks אם הספק מציע (§6)
+- **קבלה:** סנכרון שנכשל באמצע ממשיך מאותה נקודה, והשגיאה מוצגת ב-UI.
 
-### שלב 7 — אנליטיקה ודשבורד אמיתיים (3–4 ימים)
-- מסנני זמן (7/30/90 יום ומותאם), מגמות יומיות, פירוט לפי ספק, מוצר, מודל, מחלקה ופרויקט
-- דף משתמש: טביעת הרגל של אדם אחד בכל הספקים
-- **מחלקות מגיעות ממקור אמת** (Entra או Google Directory, או העלאת CSV), לא מהקלדה חופשית
-- תצוגת כיסוי: לכל מספר מוצג מאיזה ספק הוא הגיע, מתי סונכרן לאחרונה ומה חסר
-- ייצוא CSV
-- **קבלה:** מנהל לא טכני עונה על השאלות "כמה הוצאנו החודש, על מה, ומי" בלי עזרה.
+### שלב 6 — מחבר #1: Claude Enterprise (2–3 ימים)
+- לפי תוצרי שלב 1, כולל אשף חיבור ב-UI
+- **קבלה:** מול חשבון אמיתי, המספרים תואמים לקונסולת Claude.
 
-### שלב 8 — ממצאים: חריגות והמלצות (2–3 ימים)
-- כללים ראשונים: קפיצה בעלות מול ממוצע נע, רישיונות Copilot לא בשימוש, משתמש עם מנויים כפולים אצל כמה ספקים, מודל יקר לשימוש שמתאים למודל זול, מפתח API ללא בעלים, ואירועי admin חריגים ב-audit
-- לכל ממצא: הסבר, חיסכון משוער, `coverage` ו-`confidence`
-- התראות במייל או ב-Slack (אופציונלי)
-- **קבלה:** כל כלל מכוסה בבדיקה עם נתוני fixture שמפעילים אותו ונתונים שלא מפעילים אותו.
+### שלב 7 — מחבר #2: ChatGPT Enterprise (2–3 ימים)
+- לפי תוצרי שלב 1. הקוד הקיים של OpenAI API ישמש מחבר נוסף ל-OpenAI API Platform, אחרי תיקון הבאגים מ-§3.
+- **קבלה:** מול חשבון אמיתי, המספרים תואמים ל-ChatGPT Admin או Analytics.
 
-### שלב 9 — מחקר endpoints מלא (במקביל לשלבים 4–6)
-- החלפת `vendor_capability_matrix.md` בטבלה: endpoint → method → scope נדרש → שדות → שדה קנוני → מגבלות
-- מטריצת היכולות בקוד נגזרת מאותו מקור, כדי שלא יהיו שתי גרסאות סותרות
+### שלב 8 — דשבורד וניווט (3–4 ימים)
+- הניווט לפי §19: Overview, AI Products, Users, Teams, Sessions, Usage, Costs, Insights, Security & Policy, Recommendations, Connections, Settings
+- Overview לפי §8, User ו-Department footprint לפי §9, Cost לפי §10 עם סימון ויזואלי של הערכות
+- Connections: סטטוס, סנכרון אחרון, יכולות ופסי Data coverage (§20)
+- מבנה ארגוני (department, team, cost center) מגיע מ-Entra, Google Directory, SCIM או CSV
+- **קבלה:** מנהל לא טכני עונה על "כמה, איפה, מי ומה השתנה" בלי עזרה.
 
-### שלב 10 — הקשחה לפרודקשן
-- rate limiting ל-API, audit log של פעולות מנהלים במערכת עצמה, מדיניות שמירת נתונים ומחיקה לפי tenant
-- ניטור (health, מטריקות סנכרון), גיבויים, סריקת תלויות
+### שלב 9 — Insights ו-Recommendations בסיסיים (2–3 ימים)
+- §11: heavy users, רישיונות לא פעילים, מוצרים בניצול נמוך, ו-spikes בשימוש, בעלות וב-tokens
+- §14: כל ממצא כולל Finding, Evidence, Impact, Action ו-Confidence
+- **קבלה:** לכל כלל יש בדיקה עם fixture שמפעיל אותו ו-fixture שלא מפעיל אותו.
 
-**הערכה כוללת:** כ-5–7 שבועות עבודה של מפתח אחד, כולל שלב 7א. שלבים 4–6 יכולים לרוץ במקביל אחרי שלב 3.
+**כאן מסתיים ה-MVP לפי §22.**
 
-## 6. החלטות מוצר (התקבלו 2026-09-28)
+### שלב 10 — מחבר #3: Microsoft 365 Copilot (3–4 ימים)
+- OAuth ו-admin consent, Graph reports ורישיונות. אינטראקציות ו-audit לפי תוצרי המחקר.
 
-1. **פריסה: SaaS וגם התקנה אצל הלקוח.** אותו קוד בדיוק רץ בשני המצבים:
-   - image אחד של Docker, Docker Compose להתקנה פשוטה ו-Helm chart ל-Kubernetes
-   - כל ההגדרות דרך משתני סביבה: DB, מפתח הצפנה, SSO ו-URL ציבורי ל-OAuth callbacks
-   - במצב on-prem: tenant יחיד, בלי תלות בשירותי ענן חיצוניים, ומפתח ההצפנה נשאר אצל הלקוח
-   - בדיקות CI רצות מול שני המצבים
-2. **החיבור לספקים נעשה מתוך ה-UI על ידי הלקוח עצמו.** אין צורך שמישהו "יחבר מראש". לכל ספק יש אשף חיבור:
-   - OpenAI ו-Anthropic: הדבקת Admin API key (ו-Compliance key, אם יש), בדיקה חיה מול הספק, הצגת היכולות שהמפתח באמת מאפשר, ורק אז שמירה מוצפנת
-   - Microsoft: כפתור "התחבר עם Microsoft", ו-admin consent של הלקוח ב-Entra. ב-SaaS האפליקציה רשומה פעם אחת כ-multi-tenant על ידי ספק המוצר. ב-on-prem הלקוח רושם אפליקציה משלו לפי מדריך מובנה במסך
-   - מיד אחרי חיבור מופעל backfill אוטומטי, ובמסך רואים התקדמות, שגיאות ותאריך סנכרון אחרון
-   - החשבונות האמיתיים ישמשו רק לאימות סופי של כל מחבר. הפיתוח נעשה מול הקלטות של תגובות אמיתיות
-3. **איסוף תוכן שיחות ו-payloads לניתוח PII הוא חלק מרכזי במוצר** (ראו שלב 7א).
-4. **Stack:** Python/FastAPI ו-Postgres (המשך לקוד הקיים). ממשק ב-React ו-Vite (RTL, עברית), שנבנה כקבצים סטטיים ומוגש מאותו שרת.
-5. **מסמך האפיון המקורי מ-GPT לא הגיע לסשן הזה.** הוא לא נמצא בריפו ולא בשיחה. כשיתקבל, התכנית תושווה אליו סעיף אחרי סעיף.
+### שלב 11 — Security & Policy: תוכן ו-PII (§13) (5–7 ימים)
+- רק כשהספק חושף תוכן דרך API רשמי, והלקוח הפעיל את האיסוף לחיבור הזה
+- זיהוי PII, credentials, secrets וקוד מקור: Presidio (מקומי), בתוספת recognizers לישראל (ת"ז עם ספרת ביקורת, טלפון, IBAN, כרטיס אשראי עם Luhn)
+- מנוע policies (§13): "PII may not be sent to external AI systems", והממצא ברמת session
+- תצוגה מושחרת כברירת מחדל. תוכן מלא מוצג רק ל-`content_reviewer`, וכל צפייה נרשמת ב-audit
+- retention לפי §17: תוכן כבוי כברירת מחדל ומחיקה לפי מדיניות
+- Data available מול Data analyzed מוצגים לכל חיבור
 
-## 7. שלב 7א — תוכן שיחות, payloads וזיהוי PII
+### שלב 12 — Duplicate / Overlapping Work (§12)
+- embeddings ו-semantic similarity על תוכן זמין, ברמת משתמש וברמת צוות, כהמלצה בלבד
 
-זה מוסיף עוד 5–7 ימים להערכה הכוללת.
+### שלב 13 — הרחבות והקשחה
+- מחברים ל-Gemini, GitHub Copilot ו-Cursor (§7)
+- SSO/SAML, SCIM ו-tenant policies (§18)
+- ניטור, גיבויים, rate limiting וסריקת תלויות
 
-**מקורות תוכן לכל ספק** (כל שורה תאומת מול התיעוד הרשמי ב-endpoint research):
+**הערכה:** MVP (שלבים 1–9) לוקח כ-4 שבועות. עם Microsoft ותוכן ו-PII זה כ-6–7 שבועות, לפי מה שהמחקר בשלב 1 יגלה.
 
-| ספק | מקור | דרישה |
-|---|---|---|
-| ChatGPT Enterprise/Edu | Compliance API: שיחות, הודעות, קבצים ו-GPTs | תוכנית Enterprise ומפתח Compliance מ-OpenAI |
-| Claude Enterprise | Compliance API: שיחות, קבצים ופרויקטים | תוכנית Enterprise והפעלה על ידי מנהל הארגון |
-| Microsoft 365 Copilot | Graph `aiInteractionHistory` (prompts ותשובות), Purview audit | הרשאת `AiEnterpriseInteraction.Read.All` ו-admin consent |
-| OpenAI API / Claude API | הספקים **לא** חושפים את תוכן קריאות ה-API לארגון | נדרש רכיב איסוף אופציונלי: proxy קל או SDK wrapper שהלקוח מתקין |
+## 8. מחוץ לתחום (§21, §22)
 
-**צינור הניתוח**
-1. **איסוף:** תוכן גולמי נשמר מוצפן, עם מפתח לכל tenant, בטבלה נפרדת עם גישה מוגבלת.
-2. **זיהוי PII:** Microsoft Presidio (קוד פתוח, רץ מקומית, מתאים ל-on-prem), בתוספת recognizers לישראל: ת"ז עם ספרת ביקורת, טלפון ישראלי, IBAN וחשבון בנק, כרטיס אשראי עם Luhn, מספר רישוי ודרכון. שכבה אופציונלית: סיווג בעזרת מודל לסודות מסחריים, קוד מקור ומפתחות API.
-3. **סיווג רגישות:** לכל הודעה נקבעים סוגי ישויות, ציון רגישות, ומי שלח ולאיזה ספק.
-4. **ממצאים:** "משתמש X הדביק 40 מספרי ת"ז ל-ChatGPT", "מפתחות AWS נשלחו ל-Copilot", ו-heatmap של PII לפי ספק ומחלקה.
-5. **צפייה:** ברירת המחדל היא תצוגה מושחרת (redacted). צפייה בתוכן מלא דורשת הרשאת `content_reviewer`, ונרשמת ב-audit log של המערכת.
-6. **מדיניות:** retention לכל tenant (ברירת מחדל 90 יום לתוכן, מדדים נשמרים), מחיקה לפי בקשה ו-kill switch לכיבוי איסוף תוכן לכל ספק.
-
-**קבלה:** fixture של שיחות עם PII ידוע מזוהה ב-recall של 95% לפחות על הישויות הישראליות. משתמש viewer לא רואה תוכן לא מושחר. כל צפייה בתוכן מלא נרשמת.
+AI Gateway, proxy, model router, prompt firewall, EDR, ניטור דפדפן, SIEM כללי, FinOps כללי, Discovery ו-Shadow AI (Product B), ואכיפה אוטומטית.
