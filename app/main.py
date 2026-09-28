@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.models import ActivityEvent, utc_now
@@ -111,9 +112,16 @@ def seed_demo() -> dict[str, int]:
     return ingest_events("demo", IngestRequest(events=[IngestEvent(**event) for event in demo_events]))
 
 
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+
 @app.get("/")
 def dashboard() -> FileResponse:
-    dashboard_file = Path(__file__).parent / "static" / "index.html"
+    # The React prototype (frontend/, built with `npm run build`) replaces the legacy static page when present.
+    built = FRONTEND_DIST / "index.html"
+    dashboard_file = built if built.exists() else Path(__file__).parent / "static" / "index.html"
     if not dashboard_file.exists():
         raise HTTPException(status_code=404, detail="Dashboard asset is missing")
     return FileResponse(dashboard_file)

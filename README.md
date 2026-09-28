@@ -20,3 +20,17 @@ uvicorn app.main:app --reload
 `POST /api/tenants/{tenant_id}/events` מקבל אירועים מכל ספק. התגיות עוברות נרמול, למשל `prod` ו-`production` הופכות ל-`environment:production`; כל אירוע גם מקבל `vendor:<name>` ו-`department:<name>`. כך `/api/tags` מספק ניתוח אחד שחוצה ספקים.
 
 השלב הבא הוא להוסיף adapters לכל מחבר כדי שיכתבו `ActivityEvent` לאחר סנכרון מאובטח.
+
+## אב-טיפוס ממשק (frontend/)
+
+אב-טיפוס מלא ולחיץ של הממשק, בעברית, עם נתוני הדגמה של ארגון בדוי ("נובה תעשיות"). הוא כולל: סקירה לפי תפקיד, מרכז ממצאים עם כרטיס ממצא מלא (ראיות, השפעה, בעלים, צעדי טיפול, נוסח פנייה ומחזור חיים), עלויות ואופטימיזציה, אבטחה ומדיניות, שימוש ואימוץ, כלים, משתמשים, מחלקות, חיבורים עם אשף חיבור, זרם בזמן אמת והגדרות.
+
+```bash
+cd frontend
+npm install
+npm run dev              # פיתוח: http://localhost:5173
+npm run build            # בנייה ל-frontend/dist, ש-FastAPI מגיש בכתובת /
+npm run build:artifact   # קובץ HTML יחיד לשיתוף
+```
+
+שכבת הנתונים (`frontend/src/data/`) בנויה לפי מודל הנתונים שבתכנית (`docs/IMPLEMENTATION_PLAN.md` §6), ותוחלף בקריאות API בשלב ה-backend.
