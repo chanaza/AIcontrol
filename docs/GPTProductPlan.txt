@@ -1,0 +1,901 @@
+
+# AI Usage Control Plane
+
+## 1. חזון המוצר
+
+לבנות פלטפורמת Enterprise מרכזית לניהול, ניטור וניתוח השימוש הארגוני בכלי AI.
+
+המוצר יושב **מעל כלי ה-AI הקיימים בארגון** ואינו משמש כ-Gateway ואינו נמצא בנתיב התעבורה שלהם.
+
+הארגון ממשיך להשתמש ישירות ב:
+
+* ChatGPT Enterprise
+* Claude Enterprise
+* Microsoft Copilot
+* Gemini
+* GitHub Copilot
+* Cursor / Claude Code וכלי AI למפתחים
+* כלי AI ארגוניים נוספים
+
+המוצר מתחבר אליהם באמצעות ה-APIs והיכולות הרשמיות שלהם, בהרשאות שהארגון נותן, ואוסף מהם את המידע שהם מאפשרים לקבל.
+
+המטרה היא ליצור **מקור מרכזי אחד לתמונה הארגונית של שימוש ב-AI**.
+
+---
+
+# 2. עיקרון ארכיטקטוני מרכזי
+
+חשוב מאוד:
+
+**DO NOT build an AI Gateway.**
+
+המערכת אינה אמורה:
+
+* לנתב prompts דרך עצמה
+* לשמש proxy
+* לשנות את כלי ה-AI
+* לדרוש מהמשתמשים להשתמש ב-client מיוחד
+* להחליף את ChatGPT / Claude / Copilot
+* להכריח ספק AI לתמוך בפרוטוקול חדש
+
+במקום זאת:
+
+```text
+                   AI Usage Control Plane
+                            |
+          +-----------------+-----------------+
+          |                 |                 |
+      OpenAI             Anthropic        Microsoft
+      Connector          Connector        Connector
+          |                 |                 |
+     Admin API         Enterprise APIs    Graph/API
+     Usage API         Analytics API      Copilot API
+     Cost API          Compliance API     Usage API
+     Audit API         Audit API          Audit API
+          |                 |                 |
+       ChatGPT           Claude           Copilot
+```
+
+לכל vendor יש Connector עצמאי.
+
+ה-Connector אחראי להבין מה ה-API של אותו vendor מאפשר, למשוך את הנתונים, ולתרגם אותם ל-Common AI Activity Model.
+
+---
+
+# 3. הבעיה שהמוצר פותר
+
+כיום ארגון שמשתמש ב-10 כלי AI שונים מקבל 10 תמונות שונות:
+
+ChatGPT יודע מה קרה ב-ChatGPT.
+
+Claude יודע מה קרה ב-Claude.
+
+Microsoft יודעת מה קרה ב-Copilot.
+
+GitHub יודעת מה קרה ב-Copilot for developers.
+
+אבל לארגון אין בהכרח:
+
+* תמונה מאוחדת
+* השוואה בין כלים
+* עלות כוללת
+* שימוש לפי משתמש
+* שימוש לפי מחלקה
+* session-level analytics
+* זיהוי שימוש חריג
+* זיהוי שימוש כפול
+* ניתוח יעילות
+* audit מרכזי
+* policy analysis מרכזי
+
+המוצר אמור ליצור את השכבה הזו.
+
+---
+
+# 4. שני מוצרים נפרדים
+
+יש להפריד רעיונית בין שני מוצרים:
+
+## Product A — AI Usage Control Plane
+
+המוצר המרכזי.
+
+הוא עובד על **חשבונות ארגוניים שחוברו אליו באופן מפורש**.
+
+לדוגמה:
+
+Administrator מחבר:
+
+```text
+Acme ChatGPT Enterprise
+Acme Claude Enterprise
+Acme Microsoft Copilot
+Acme GitHub Copilot
+```
+
+מרגע החיבור, המערכת משתמשת ב-APIs המורשים של כל ספק ומביאה את המידע הזמין.
+
+## Product B — AI Discovery
+
+מוצר נפרד.
+
+המטרה שלו היא לגלות מה העובדים משתמשים בו בפועל, כולל:
+
+* browser telemetry
+* endpoint
+* network
+* SSO
+* SaaS discovery
+* Shadow AI
+
+הוא עונה על:
+
+> "באילו כלי AI העובדים משתמשים?"
+
+לא:
+
+> "מה קורה בתוך חשבון ChatGPT Enterprise שכבר חיברתי?"
+
+Discovery יכול בעתיד להמליץ:
+
+> "זוהה שימוש ב-Claude אצל 37 עובדים. האם לחבר את Claude Enterprise ל-Control Plane?"
+
+אבל אין לערבב את שני המוצרים ב-MVP.
+
+---
+
+# 5. Common AI Activity Model
+
+המערכת צריכה לנרמל מידע שמגיע מספקים שונים למודל משותף.
+
+ישות מרכזית:
+
+## Organization
+
+```text
+organization_id
+name
+```
+
+## AI Provider
+
+```text
+provider_id
+name
+type
+```
+
+לדוגמה:
+
+```text
+OpenAI
+Anthropic
+Microsoft
+Google
+GitHub
+```
+
+## AI Product
+
+```text
+product_id
+provider_id
+name
+```
+
+לדוגמה:
+
+```text
+ChatGPT Enterprise
+Claude Enterprise
+Microsoft Copilot
+GitHub Copilot
+```
+
+## User
+
+```text
+user_id
+email
+name
+department
+team
+role
+cost_center
+identity_source
+```
+
+## Session
+
+```text
+session_id
+provider
+product
+user
+start_time
+end_time
+model
+input_tokens
+output_tokens
+total_tokens
+estimated_cost
+source
+```
+
+## Activity / Event
+
+כאשר ה-API מאפשר זאת:
+
+```text
+event_id
+session_id
+timestamp
+user
+action_type
+model
+input_tokens
+output_tokens
+cost
+metadata
+content_reference
+```
+
+חשוב:
+
+**לא להניח שכל vendor מספק את כל השדות.**
+
+לכל connector יש Capability Matrix.
+
+לדוגמה:
+
+```text
+Claude:
+  usage: YES
+  cost: YES
+  sessions: YES
+  conversation content: MAYBE
+  audit: YES
+
+Vendor X:
+  usage: YES
+  cost: YES
+  sessions: NO
+  content: NO
+```
+
+המערכת צריכה להציג זאת ולא להמציא נתונים.
+
+---
+
+# 6. Connector Framework
+
+המערכת צריכה להיות בנויה כך שהוספת vendor חדש תהיה פשוטה.
+
+כל Connector צריך לממש interface דומה:
+
+```text
+authenticate()
+test_connection()
+get_capabilities()
+sync_users()
+sync_usage()
+sync_cost()
+sync_sessions()
+sync_audit()
+sync_content()
+get_sync_cursor()
+```
+
+לא כל פונקציה חייבת להיות נתמכת.
+
+ה-connector מדווח:
+
+```text
+Supported:
+  Usage
+  Cost
+  Users
+  Sessions
+  Audit
+
+Not supported:
+  Conversation content
+  Token-level detail
+```
+
+המערכת צריכה לתמוך ב:
+
+* OAuth
+* API keys
+* service accounts
+* enterprise admin credentials
+* webhook/event ingestion אם קיים
+* polling
+* incremental sync
+* pagination
+* rate limits
+* retry
+* cursor-based synchronization
+
+יש לשמור את credentials בצורה מאובטחת.
+
+---
+
+# 7. MVP Connectors
+
+ל-MVP יש לבנות abstraction שמאפשר מספר vendors, אבל אפשר להתחיל עם 2–3 connectors אמיתיים.
+
+העדיפות:
+
+1. Anthropic / Claude Enterprise
+2. OpenAI / ChatGPT Enterprise
+3. Microsoft Copilot
+
+לאחר מכן:
+
+4. Google Gemini
+5. GitHub Copilot
+6. Cursor
+7. אחרים
+
+אין להמציא APIs.
+
+לפני implementation של Connector יש לבדוק את ה-API documentation העדכני של אותו vendor ולתעד בדיוק מה ניתן לקבל.
+
+---
+
+# 8. Dashboard מרכזי
+
+המסך הראשי צריך לענות על:
+
+### כמה AI יש בארגון?
+
+```text
+Connected AI Products: 7
+Active Users: 1,842
+Sessions: 128,430
+Total Tokens: 4.8B
+Estimated Cost: $84,320
+```
+
+### איפה משתמשים?
+
+```text
+ChatGPT       42%
+Copilot       28%
+Claude        19%
+Gemini         7%
+Other          4%
+```
+
+### מי משתמש?
+
+לפי:
+
+* user
+* department
+* team
+* role
+* cost center
+
+### מה השתנה?
+
+```text
+Usage +31%
+Cost +24%
+Active users +18%
+Average session cost +7%
+```
+
+---
+
+# 9. Cross-Vendor Analytics
+
+זה אחד הערכים המרכזיים של המוצר.
+
+לא רק:
+
+> "מה קורה ב-Claude?"
+
+אלא:
+
+> "מה קורה בארגון כולו?"
+
+לדוגמה:
+
+### User AI footprint
+
+```text
+John Smith
+
+ChatGPT       21 sessions
+Claude        13 sessions
+Copilot       48 sessions
+Cursor         9 sessions
+
+Total:
+91 sessions
+$73 estimated cost
+```
+
+### Department AI footprint
+
+```text
+Engineering
+  Copilot: $12K
+  Claude:  $8K
+  Cursor:  $5K
+  ChatGPT: $2K
+```
+
+---
+
+# 10. Cost Intelligence
+
+המערכת צריכה לחשב ולרכז:
+
+* vendor cost
+* token cost
+* subscription/license cost
+* estimated cost כאשר אין cost API
+* cost per user
+* cost per team
+* cost per session
+* cost per model
+* cost trend
+
+חשוב להבדיל בין:
+
+**Actual cost**
+
+לבין:
+
+**Estimated cost**
+
+לעולם לא להציג estimation כאילו הוא נתון רשמי.
+
+---
+
+# 11. Usage Intelligence
+
+לזהות:
+
+### Heavy users
+
+משתמשים עם שימוש חריג.
+
+### Inactive licenses
+
+משתמשים שמקבלים license אבל כמעט לא משתמשים.
+
+### Underutilized products
+
+כלי AI שהארגון משלם עליו אבל השימוש בו נמוך.
+
+### Usage spikes
+
+קפיצה חריגה בשימוש.
+
+### Cost anomalies
+
+קפיצה חריגה בעלות.
+
+### Token anomalies
+
+קפיצה חריגה במספר tokens.
+
+---
+
+# 12. Duplicate / Overlapping Work
+
+זה feature חשוב עתידי.
+
+המערכת תנסה לזהות שימוש מקביל או כפול בכלי AI שונים.
+
+לדוגמה:
+
+```text
+User A
+
+09:12 Claude:
+"Summarize this financial report"
+
+09:18 ChatGPT:
+"Summarize this financial report"
+```
+
+או ברמה רחבה יותר:
+
+```text
+Team A:
+uses Claude for task X
+
+Team B:
+uses ChatGPT for essentially the same task
+```
+
+זה לא צריך להיות exact duplicate בלבד.
+
+אפשר להשתמש ב-embeddings / semantic similarity כדי לזהות:
+
+* repeated prompts
+* repeated documents
+* similar tasks
+* redundant workflows
+* parallel AI usage
+
+התוצאה היא recommendation:
+
+> "This activity appears to duplicate activity performed in another AI tool."
+
+לא לבצע enforcement בשלב הראשון.
+
+---
+
+# 13. AI Security / Policy Analytics
+
+זה אינו Real-Time AI Security product.
+
+המטרה היא **retrospective analysis** של המידע שנאסף.
+
+כאשר vendor API מאפשר גישה לתוכן או metadata מתאים, המערכת יכולה לבדוק:
+
+### Sensitive information
+
+* PII
+* credentials
+* secrets
+* source code
+* internal documents
+* financial information
+* customer information
+
+### Policy violations
+
+לדוגמה:
+
+```text
+Policy:
+Do not upload source code to non-approved AI tools.
+
+Finding:
+User X uploaded source code to Tool Y.
+```
+
+או:
+
+```text
+Policy:
+PII may not be sent to external AI systems.
+
+Finding:
+Session 123 contains detected PII.
+```
+
+יש להפריד בין:
+
+**Data available**
+
+לבין:
+
+**Data analyzed**
+
+אם vendor לא מספק conversation content, אין לטעון שהמערכת יודעת מה היה בתוך ה-session.
+
+---
+
+# 14. Recommendations Engine
+
+בשלב הראשון המוצר הוא **Analyze + Recommend**.
+
+לא Control.
+
+דוגמאות:
+
+> "Claude usage increased 43% this month."
+
+> "17 users have inactive Copilot licenses."
+
+> "Engineering uses three AI coding products with overlapping usage."
+
+> "User X has unusually high token consumption."
+
+> "72 sessions contain probable sensitive information."
+
+> "Tool X has very low adoption compared with its license count."
+
+> "Users in Department A are using an unapproved AI product."
+
+כל recommendation צריכה להציג:
+
+```text
+Finding
+Evidence
+Impact
+Recommended action
+Confidence
+```
+
+---
+
+# 15. Future Control Plane
+
+לא לממש ב-MVP, אבל הארכיטקטורה צריכה לאפשר זאת.
+
+בעתיד, לאחר שהמערכת מחוברת ל-vendor APIs, היא תוכל לבצע actions כמו:
+
+* disable user access
+* revoke session
+* change policy
+* remove license
+* change model access
+* enforce spending limit
+* change configuration
+* revoke connector
+* approve/reject AI product
+
+אבל:
+
+**The Control Plane should call the vendor's official API.**
+
+הוא עדיין לא הופך ל-Gateway.
+
+```text
+Control Plane
+      |
+      | API
+      ↓
+Claude Enterprise
+```
+
+ולא:
+
+```text
+User
+  ↓
+Control Plane Gateway
+  ↓
+Claude
+```
+
+---
+
+# 16. Data Architecture
+
+המערכת צריכה להפריד בין:
+
+### Raw vendor data
+
+המידע כפי שהגיע מה-vendor.
+
+### Normalized data
+
+Common AI Activity Model.
+
+### Derived analytics
+
+Anomalies, recommendations, classifications וכו'.
+
+### Sensitive content
+
+אם בכלל נאסף.
+
+Sensitive content צריך להיות מאוחסן בנפרד עם:
+
+* encryption
+* strict access control
+* retention policy
+* audit
+* configurable deletion
+
+לא כל connector חייב לשמור content.
+
+---
+
+# 17. Data retention
+
+המערכת צריכה לאפשר policy configurable:
+
+```text
+Raw data:
+30 / 90 / 180 days
+
+Normalized usage:
+1–3 years
+
+Aggregated metrics:
+long-term
+
+Conversation content:
+disabled by default / configurable
+```
+
+אין לאסוף conversation content אם אין צורך או אם הלקוח לא אישר זאת.
+
+---
+
+# 18. Multi-Tenant Enterprise Architecture
+
+המוצר צריך להיות SaaS-ready.
+
+כל Organization הוא tenant מבודד.
+
+```text
+Organization
+  ├── Connections
+  ├── Users
+  ├── AI Products
+  ├── Sessions
+  ├── Usage
+  ├── Findings
+  └── Policies
+```
+
+בהמשך:
+
+* RBAC
+* SSO/SAML
+* SCIM
+* audit logs
+* tenant-specific retention
+* tenant-specific policies
+
+---
+
+# 19. UX
+
+ה-UX צריך להיות פשוט ולא SIEM-like.
+
+Navigation:
+
+```text
+Overview
+
+AI Products
+Users
+Teams
+Sessions
+Usage
+Costs
+Insights
+Security & Policy
+Recommendations
+
+Connections
+Settings
+```
+
+### AI Products
+
+```text
+Product       Users    Sessions    Cost    Trend
+ChatGPT       842      42,381      $31K    +18%
+Claude        431      21,203      $22K    +41%
+Copilot       923      54,821      $18K    +11%
+```
+
+### Connections
+
+```text
+Claude Enterprise
+Connected ✓
+Last sync: 4 minutes ago
+
+Capabilities:
+✓ Users
+✓ Usage
+✓ Cost
+✓ Sessions
+✓ Audit
+✓ Conversation data
+```
+
+---
+
+# 20. Critical product principle
+
+Never pretend the system has information that the vendor does not expose.
+
+The platform must explicitly show:
+
+```text
+Data coverage
+```
+
+for every connection.
+
+For example:
+
+```text
+Claude Enterprise
+
+Usage            ██████████ 100%
+Cost             ██████████ 100%
+Users            ██████████ 100%
+Sessions         ██████████ 100%
+Audit            ██████████ 100%
+Content          ██████░░░░  60%
+```
+
+This is important because different vendors will expose radically different APIs.
+
+---
+
+# 21. What NOT to build
+
+Do not turn this into:
+
+* AI Gateway
+* LLM proxy
+* Model router
+* real-time prompt firewall
+* prompt injection protection
+* agent runtime security
+* endpoint EDR
+* browser monitoring platform
+* generic SIEM
+* generic FinOps platform
+
+Those are different products.
+
+The core product is:
+
+> **A vendor-neutral management and intelligence layer over an organization's existing AI tools.**
+
+---
+
+# 22. MVP Definition
+
+The MVP should prove one thing:
+
+> "I can connect an enterprise AI account, ingest its authorized data, normalize it, and combine it with another AI provider into one useful organizational view."
+
+MVP should therefore include:
+
+1. Multi-tenant backend
+2. Connector framework
+3. Two real AI vendor connectors
+4. OAuth/API credential management
+5. Incremental synchronization
+6. Common AI Activity Model
+7. Users
+8. Products
+9. Sessions
+10. Usage
+11. Cost
+12. Dashboard
+13. Cross-vendor analytics
+14. Basic anomaly detection
+15. Basic recommendations
+16. Connection capability matrix
+
+Do NOT build advanced DLP, real-time enforcement, discovery, or automated controls in the first version.
+
+---
+
+# 23. The product in one sentence
+
+**An enterprise AI Control Plane that connects directly to the organization's existing AI platforms, consolidates their authorized usage, cost, session and audit data into one normalized view, and uses that data to identify waste, anomalies, duplication, policy risks and optimization opportunities — without becoming a gateway or changing how users interact with their AI tools.**
+
+# 24. First implementation task for Claude Code
+
+Before writing application code:
+
+1. Research the current official APIs for:
+
+   * OpenAI Enterprise
+   * Anthropic Claude Enterprise
+   * Microsoft Copilot
+2. Build a capability matrix showing exactly what each API exposes.
+3. Do not assume that "Enterprise account = full API access".
+4. Identify authentication requirements.
+5. Identify whether session-level data is available.
+6. Identify whether conversation content is available.
+7. Identify token/cost granularity.
+8. Identify audit-log availability.
+9. Identify rate limits and pagination.
+10. Based on that research, propose the first two connectors and the normalized data model.
+
+Use **official vendor documentation as the source of truth**. Do not invent APIs or endpoints.
+
+Only after this research is complete should implementation begin.
